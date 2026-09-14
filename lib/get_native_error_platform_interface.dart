@@ -1,0 +1,48 @@
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+
+import 'get_native_error_method_channel.dart';
+
+/// The platform interface implemented by Android and iOS.
+///
+/// App code should use `NativeError` instead of this class.
+abstract class GetNativeErrorPlatform extends PlatformInterface {
+  /// Constructs a GetNativeErrorPlatform.
+  GetNativeErrorPlatform() : super(token: _token);
+
+  static final Object _token = Object();
+
+  static GetNativeErrorPlatform _instance = MethodChannelGetNativeError();
+
+  /// The default instance of [GetNativeErrorPlatform] to use.
+  ///
+  /// Defaults to [MethodChannelGetNativeError].
+  static GetNativeErrorPlatform get instance => _instance;
+
+  /// Platform-specific implementations should set this with their own
+  /// platform-specific class that extends [GetNativeErrorPlatform] when
+  /// they register themselves.
+  static set instance(GetNativeErrorPlatform instance) {
+    PlatformInterface.verifyToken(instance, _token);
+    _instance = instance;
+  }
+
+  /// Installs native crash handlers.
+  Future<void> install() {
+    throw UnimplementedError('install() has not been implemented.');
+  }
+
+  /// JSON for a pending crash, or `null` if none. Does not delete the file.
+  Future<String?> peekPendingCrash() {
+    throw UnimplementedError('peekPendingCrash() has not been implemented.');
+  }
+
+  /// JSON for a pending crash, or `null` if none. Deletes the file.
+  Future<String?> takePendingCrash() {
+    throw UnimplementedError('takePendingCrash() has not been implemented.');
+  }
+
+  /// Debug-only native crash. See `NativeError.crashNative`.
+  Future<void> crashNative() {
+    throw UnimplementedError('crashNative() has not been implemented.');
+  }
+}

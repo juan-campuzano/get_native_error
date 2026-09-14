@@ -1,0 +1,36 @@
+name: get_native_error
+description: >-
+  Capture fatal native signals on Android and iOS and read them from Dart
+  on the next launch.
+version: 0.0.1
+homepage: https://github.com/juan-campuzano/get_native_error
+repository: https://github.com/juan-campuzano/get_native_error
+issue_tracker: https://github.com/juan-campuzano/get_native_error/issues
+topics:
+  - crash-reporting
+  - error-handling
+  - android
+  - ios
+
+environment:
+  sdk: ^3.12.0
+  flutter: '>=3.3.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  plugin_platform_interface: ^2.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.getnativeerror.get_native_error
+        pluginClass: GetNativeErrorPlugin
+      ios:
+        pluginClass: GetNativeErrorPlugin
