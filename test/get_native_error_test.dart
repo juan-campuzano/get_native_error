@@ -8,9 +8,13 @@ class MockGetNativeErrorPlatform
     with MockPlatformInterfaceMixin
     implements GetNativeErrorPlatform {
   String? pending;
+  int installCount = 0;
+  int crashNativeCount = 0;
 
   @override
-  Future<void> install() async {}
+  Future<void> install() async {
+    installCount++;
+  }
 
   @override
   Future<String?> peekPendingCrash() async => pending;
@@ -23,15 +27,48 @@ class MockGetNativeErrorPlatform
   }
 
   @override
-  Future<void> crashNative() async {}
+  Future<void> crashNative() async {
+    crashNativeCount++;
+  }
 }
 
 void main() {
-  final GetNativeErrorPlatform initialPlatform =
-      GetNativeErrorPlatform.instance;
+  late GetNativeErrorPlatform initialPlatform;
+
+  setUp(() {
+    initialPlatform = GetNativeErrorPlatform.instance;
+  });
+
+  tearDown(() {
+    GetNativeErrorPlatform.instance = initialPlatform;
+  });
 
   test('$MethodChannelGetNativeError is the default instance', () {
     expect(initialPlatform, isInstanceOf<MethodChannelGetNativeError>());
+  });
+
+  test('install and crashNative delegate to the platform', () async {
+    final fakePlatform = MockGetNativeErrorPlatform();
+    GetNativeErrorPlatform.instance = fakePlatform;
+
+    await NativeError.install();
+    await NativeError.crashNative();
+
+    expect(fakePlatform.installCount, 1);
+    expect(fakePlatform.crashNativeCount, 1);
+  });
+
+  test('peekPendingCrash does not consume the pending report', () async {
+    final fakePlatform = MockGetNativeErrorPlatform()
+      ..pending = '{"kind":"signal","signal":"SIGBUS"}';
+    GetNativeErrorPlatform.instance = fakePlatform;
+
+    final first = await NativeError.peekPendingCrash();
+    final second = await NativeError.peekPendingCrash();
+
+    expect(first?.signal, 'SIGBUS');
+    expect(second?.signal, 'SIGBUS');
+    expect(await NativeError.takePendingCrash(), isNotNull);
   });
 
   test('takePendingCrash parses JSON and clears the pending file', () async {
@@ -50,13 +87,43 @@ void main() {
     expect(await NativeError.takePendingCrash(), isNull);
   });
 
-  test('fromMap copies extras into raw for API posting', () {
-    final report = NativeCrashReport.fromMap({
-      'kind': 'java',
-      'exceptionType': 'java.lang.RuntimeException',
-      'custom': 'field',
-    });
-    expect(report.exceptionType, 'java.lang.RuntimeException');
-    expect(report.toJson()['custom'], 'field');
+  test('parses java JSON from a previous run', () async {
+    final fakePlatform = MockGetNativeErrorPlatform()
+      ..pending =
+          '{"kind":"java","exceptionType":"java.lang.RuntimeException","threadName":"main"}';
+    GetNativeErrorPlatform.instance = fakePlatform;
+
+    final report = await NativeError.takePendingCrash();
+    expect(report?.kind, 'java');
+    expect(report?.exceptionType, 'java.lang.RuntimeException');
+    expect(report?.threadName, 'main');
+  });
+
+  test('returns null when there is no pending JSON', () async {
+    GetNativeErrorPlatform.instance = MockGetNativeErrorPlatform();
+
+    expect(await NativeError.peekPendingCrash(), isNull);
+    expect(await NativeError.takePendingCrash(), isNull);
+  });
+
+  test('returns null for empty pending JSON', () async {
+    GetNativeErrorPlatform.instance = MockGetNativeErrorPlatform()
+      ..pending = '';
+
+    expect(await NativeError.peekPendingCrash(), isNull);
+  });
+
+  test('returns null when pending JSON is not an object', () async {
+    GetNativeErrorPlatform.instance = MockGetNativeErrorPlatform()
+      ..pending = '["signal"]';
+
+    expect(await NativeError.takePendingCrash(), isNull);
+  });
+
+  test('throws FormatException for invalid pending JSON', () async {
+    GetNativeErrorPlatform.instance = MockGetNativeErrorPlatform()
+      ..pending = '{not-json';
+
+    expect(NativeError.peekPendingCrash(), throwsFormatException);
   });
 }

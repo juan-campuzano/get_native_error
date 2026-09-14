@@ -1,0 +1,31 @@
+# Publishes to pub.dev when a version tag is pushed (for example v0.0.2).
+#
+# One-time setup on pub.dev (package Admin tab):
+# 1. Enable publishing from GitHub Actions.
+# 2. Repository: juan-campuzano/get_native_error
+# 3. Tag pattern: v{{version}}
+#
+# The first version of a new package must be published locally with
+# `flutter pub publish`. Automated publishing only works after that.
+#
+# Then: git tag vX.Y.Z && git push origin vX.Y.Z
+# The tag must match the version in pubspec.yaml.
+
+name: Publish to pub.dev
+
+on:
+  push:
+    tags:
+      # Must match the pub.dev tag pattern v{{version}}
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+jobs:
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: test
+    permissions:
+      id-token: write
+      contents: read
+    uses: dart-lang/setup-dart/.github/workflows/publish.yml@v1

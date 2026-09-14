@@ -5,19 +5,28 @@ import 'package:get_native_error/get_native_error_method_channel.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  final MethodChannelGetNativeError platform = MethodChannelGetNativeError();
+  late MethodChannelGetNativeError platform;
   const MethodChannel channel = MethodChannel('get_native_error');
+  final List<MethodCall> log = <MethodCall>[];
+  String? pendingJson = '{"kind":"signal","signal":"SIGABRT"}';
 
   setUp(() {
+    platform = MethodChannelGetNativeError();
+    log.clear();
+    pendingJson = '{"kind":"signal","signal":"SIGABRT"}';
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (MethodCall methodCall) async {
+          log.add(methodCall);
           switch (methodCall.method) {
             case 'install':
             case 'crashNative':
               return null;
             case 'peekPendingCrash':
+              return pendingJson;
             case 'takePendingCrash':
-              return '{"kind":"signal","signal":"SIGABRT"}';
+              final value = pendingJson;
+              pendingJson = null;
+              return value;
             default:
               return null;
           }
@@ -33,5 +42,22 @@ void main() {
     await platform.install();
     expect(await platform.peekPendingCrash(), contains('SIGABRT'));
     expect(await platform.takePendingCrash(), contains('SIGABRT'));
+    expect(await platform.takePendingCrash(), isNull);
+    expect(log.map((call) => call.method), [
+      'install',
+      'peekPendingCrash',
+      'takePendingCrash',
+      'takePendingCrash',
+    ]);
+  });
+
+  test('crashNative invokes the method channel', () async {
+    await platform.crashNative();
+    expect(log.single.method, 'crashNative');
+  });
+
+  test('peekPendingCrash returns null when native has no file', () async {
+    pendingJson = null;
+    expect(await platform.peekPendingCrash(), isNull);
   });
 }
