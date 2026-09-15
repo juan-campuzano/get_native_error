@@ -1,4 +1,5 @@
-# Publishes to pub.dev when a version tag is pushed (for example v0.0.2).
+# Publishes to pub.dev when a version tag is pushed (for example v0.0.2
+# or v0.0.2-rc.1).
 #
 # One-time setup on pub.dev (package Admin tab):
 # 1. Enable publishing from GitHub Actions.
@@ -9,6 +10,7 @@
 # `flutter pub publish`. Automated publishing only works after that.
 #
 # Then: git tag vX.Y.Z && git push origin vX.Y.Z
+# Pre-release: git tag v0.0.2-rc.1 && git push origin v0.0.2-rc.1
 # The tag must match the version in pubspec.yaml.
 
 name: Publish to pub.dev
@@ -16,8 +18,9 @@ name: Publish to pub.dev
 on:
   push:
     tags:
-      # Must match the pub.dev tag pattern v{{version}}
-      - 'v[0-9]+.[0-9]+.[0-9]+'
+      # Must match the pub.dev tag pattern v{{version}}, including
+      # Dart pre-releases such as v0.0.2-rc.1.
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 jobs:
   test:
