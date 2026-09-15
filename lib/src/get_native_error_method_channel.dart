@@ -53,6 +53,11 @@ class MethodChannelGetNativeError extends GetNativeErrorPlatform {
     await methodChannel.invokeMethod<void>('crashNative');
   }
 
+  @override
+  Future<void> crashUncaughtException() async {
+    await methodChannel.invokeMethod<void>('crashUncaughtException');
+  }
+
   List<String> _asStringList(List<Object?>? result) {
     if (result == null) {
       return const <String>[];

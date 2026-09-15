@@ -1,3 +1,7 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+
 #include "gne_signal.h"
 
 #include <errno.h>
@@ -16,15 +20,17 @@
 
 #ifdef __ANDROID__
 #include <sys/syscall.h>
+#include <ucontext.h>
 #endif
 
 #if defined(__APPLE__)
 #include <pthread.h>
+#include <sys/ucontext.h>
 #endif
 
 #define GNE_ALT_STACK_SIZE (64 * 1024)
 #define GNE_PATH_MAX 1024
-#define GNE_JSON_MAX 4096
+#define GNE_JSON_MAX 16384
 #define GNE_MAX_FRAMES 32
 #define GNE_SIGNAL_COUNT 6
 
@@ -154,63 +160,143 @@ static int gne_fp_sane(uintptr_t fp, uintptr_t prev) {
   return 1;
 }
 
-// Resuelve una direccion de retorno a "modulo!simbolo + 0xoffset [0xraw]"
-// usando dladdr, que consulta tablas ya mapeadas sin reservar memoria y es
-// seguro dentro del handler. El nombre C++ queda mangled a proposito: el
-// demangle usa malloc/free y no es async-signal-safe, por lo que se difiere a
-// la capa Dart tras reiniciar. Cuando dladdr no resuelve, se emite la
-// direccion cruda para poder correlacionar con simbolos externos.
+static const char *gne_basename(const char *path) {
+  if (path == NULL || path[0] == '\0') {
+    return "unknown-module";
+  }
+  const char *base = path;
+  for (const char *p = path; *p != '\0'; ++p) {
+    if (*p == '/' || *p == '\\') {
+      base = p + 1;
+    }
+  }
+  return base[0] != '\0' ? base : path;
+}
+
+// Reads the crashing PC / FP / LR from ucontext so frame 0 is the fault, not
+// this handler. Unknown arches leave the outputs at zero.
+static void gne_read_ucontext(void *ucontext, uintptr_t *pc, uintptr_t *fp,
+                              uintptr_t *lr) {
+  *pc = 0;
+  *fp = 0;
+  *lr = 0;
+  if (ucontext == NULL) {
+    return;
+  }
+  ucontext_t *uc = (ucontext_t *)ucontext;
+#if defined(__APPLE__) && defined(__aarch64__)
+  *pc = (uintptr_t)uc->uc_mcontext->__ss.__pc;
+  *fp = (uintptr_t)uc->uc_mcontext->__ss.__fp;
+  *lr = (uintptr_t)uc->uc_mcontext->__ss.__lr;
+#elif defined(__APPLE__) && defined(__x86_64__)
+  *pc = (uintptr_t)uc->uc_mcontext->__ss.__rip;
+  *fp = (uintptr_t)uc->uc_mcontext->__ss.__rbp;
+#elif defined(__linux__) && defined(__aarch64__)
+  *pc = (uintptr_t)uc->uc_mcontext.pc;
+  *fp = (uintptr_t)uc->uc_mcontext.regs[29];
+  *lr = (uintptr_t)uc->uc_mcontext.regs[30];
+#elif defined(__linux__) && defined(__arm__)
+  *pc = (uintptr_t)uc->uc_mcontext.arm_pc;
+  *fp = (uintptr_t)uc->uc_mcontext.arm_fp;
+  *lr = (uintptr_t)uc->uc_mcontext.arm_lr;
+#elif defined(__linux__) && defined(__x86_64__)
+  *pc = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
+  *fp = (uintptr_t)uc->uc_mcontext.gregs[REG_RBP];
+#endif
+}
+
+// Resolves a return address to a compact, hotfix-oriented line:
+//   libfoo.so!symbol +0xoff [0xpc]
+// or, when the .so is stripped:
+//   libfoo.so +0xmodule_off [0xpc]
+// dladdr only consults already-mapped tables (async-signal-safe enough for a
+// crash handler). C++ names stay mangled: demangle uses malloc.
 static size_t gne_append_frame(char *buf, size_t off, size_t cap, uintptr_t addr) {
+  if (addr == 0) {
+    return off;
+  }
 #if defined(__ANDROID__) || defined(__APPLE__)
   Dl_info info;
   memset(&info, 0, sizeof(info));
   if (dladdr((const void *)addr, &info) != 0) {
-    const char *module = info.dli_fname != NULL ? info.dli_fname : "unknown-module";
-    const char *symbol = info.dli_sname != NULL ? info.dli_sname : "unknown-symbol";
-    unsigned long offset = 0;
-    if (info.dli_saddr != NULL) {
-      offset = (unsigned long)(addr - (uintptr_t)info.dli_saddr);
-    }
+    const char *module = gne_basename(info.dli_fname);
     off = gne_append_str(buf, off, cap, module);
-    off = gne_append_str(buf, off, cap, "!");
-    off = gne_append_str(buf, off, cap, symbol);
-    off = gne_append_str(buf, off, cap, " + ");
-    off = gne_append_hex(buf, off, cap, offset);
+    if (info.dli_sname != NULL && info.dli_sname[0] != '\0') {
+      unsigned long offset = 0;
+      if (info.dli_saddr != NULL) {
+        offset = (unsigned long)(addr - (uintptr_t)info.dli_saddr);
+      }
+      off = gne_append_str(buf, off, cap, "!");
+      off = gne_append_str(buf, off, cap, info.dli_sname);
+      off = gne_append_str(buf, off, cap, " + ");
+      off = gne_append_hex(buf, off, cap, offset);
+    } else {
+      unsigned long offset = 0;
+      if (info.dli_fbase != NULL) {
+        offset = (unsigned long)(addr - (uintptr_t)info.dli_fbase);
+      }
+      off = gne_append_str(buf, off, cap, " + ");
+      off = gne_append_hex(buf, off, cap, offset);
+    }
     off = gne_append_str(buf, off, cap, " [");
     off = gne_append_hex(buf, off, cap, (unsigned long)addr);
     off = gne_append_str(buf, off, cap, "]");
     return off;
   }
 #endif
-  off = gne_append_hex(buf, off, cap, (unsigned long)addr);
-  return off;
+  return gne_append_hex(buf, off, cap, (unsigned long)addr);
 }
 
-static size_t gne_append_stack(char *buf, size_t off, size_t cap) {
-  uintptr_t fp = (uintptr_t)__builtin_frame_address(0);
-  uintptr_t prev = 0;
+static size_t gne_append_stack(char *buf, size_t off, size_t cap, void *ucontext) {
+  uintptr_t pc = 0;
+  uintptr_t fp = 0;
+  uintptr_t lr = 0;
+  gne_read_ucontext(ucontext, &pc, &fp, &lr);
+
   int frames = 0;
-  while (frames < GNE_MAX_FRAMES && gne_fp_sane(fp, prev)) {
-    uintptr_t *frame = (uintptr_t *)fp;
-    uintptr_t lr = frame[1];
+  if (pc != 0) {
+    off = gne_append_frame(buf, off, cap, pc);
+    frames++;
+  }
+  if (lr != 0 && lr != pc) {
     if (frames > 0) {
       off = gne_append_str(buf, off, cap, "\\n");
     }
     off = gne_append_frame(buf, off, cap, lr);
+    frames++;
+  }
+
+  if (fp == 0) {
+    fp = (uintptr_t)__builtin_frame_address(0);
+  }
+
+  uintptr_t prev = 0;
+  while (frames < GNE_MAX_FRAMES && gne_fp_sane(fp, prev)) {
+    uintptr_t *frame = (uintptr_t *)fp;
+    uintptr_t ret = frame[1];
+    if (ret != 0 && ret != pc && ret != lr) {
+      if (frames > 0) {
+        off = gne_append_str(buf, off, cap, "\\n");
+      }
+      off = gne_append_frame(buf, off, cap, ret);
+      frames++;
+    }
     prev = fp;
     fp = frame[0];
-    frames++;
   }
   return off;
 }
 
-static void gne_write_report(int signo, siginfo_t *info) {
+static void gne_write_report(int signo, siginfo_t *info, void *ucontext) {
   char json[GNE_JSON_MAX];
   size_t off = 0;
   const size_t cap = sizeof(json);
   long timestamp_ms = (long)time(NULL) * 1000L;
   unsigned long fault = 0;
   int code = 0;
+  uintptr_t pc = 0;
+  uintptr_t fp = 0;
+  uintptr_t lr = 0;
 
   if (g_crash_path[0] == '\0') {
     return;
@@ -219,6 +305,9 @@ static void gne_write_report(int signo, siginfo_t *info) {
     code = info->si_code;
     fault = (unsigned long)(uintptr_t)info->si_addr;
   }
+  gne_read_ucontext(ucontext, &pc, &fp, &lr);
+  (void)fp;
+  (void)lr;
 
   off = gne_append_str(json, off, cap, "{\"kind\":\"signal\",\"signal\":\"");
   off = gne_append_str(json, off, cap, gne_signal_name(signo));
@@ -228,6 +317,8 @@ static void gne_write_report(int signo, siginfo_t *info) {
   off = gne_append_uint(json, off, cap, (unsigned long)(unsigned)code);
   off = gne_append_str(json, off, cap, ",\"faultAddress\":\"");
   off = gne_append_hex(json, off, cap, fault);
+  off = gne_append_str(json, off, cap, "\",\"faultingPc\":\"");
+  off = gne_append_hex(json, off, cap, (unsigned long)pc);
   off = gne_append_str(json, off, cap, "\",\"pid\":");
   off = gne_append_uint(json, off, cap, (unsigned long)getpid());
   off = gne_append_str(json, off, cap, ",\"tid\":");
@@ -239,12 +330,11 @@ static void gne_write_report(int signo, siginfo_t *info) {
   off = gne_append_str(json, off, cap, "\",\"timestampMs\":");
   off = gne_append_uint(json, off, cap, (unsigned long)timestamp_ms);
   off = gne_append_str(json, off, cap, ",\"stackTrace\":\"");
-  off = gne_append_stack(json, off, cap);
+  off = gne_append_stack(json, off, cap, ucontext);
   off = gne_append_str(json, off, cap, "\"}\n");
 
-  // JSON Lines en modo append: una sesion puede dejar varios reportes y cada
-  // uno es una sola linea, porque el stack trace usa "\\n" escapado y no
-  // saltos reales. O_APPEND mantiene la escritura segura dentro del handler.
+  // JSON Lines in append mode: one session can leave several reports, each a
+  // single line, because the stack uses escaped "\\n" rather than real breaks.
   int fd = open(g_crash_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
   if (fd < 0) {
     return;
@@ -291,7 +381,7 @@ static void gne_signal_handler(int signo, siginfo_t *info, void *ucontext) {
     return;
   }
   g_handling = 1;
-  gne_write_report(signo, info);
+  gne_write_report(signo, info, ucontext);
   gne_chain_previous(signo, info, ucontext);
 }
 
@@ -348,6 +438,9 @@ void gne_install(const char *crash_file_path, const char *platform) {
   }
 }
 
+#if defined(__GNUC__)
+__attribute__((noinline, visibility("default")))
+#endif
 void gne_crash_native(void) {
   volatile int *ptr = (volatile int *)NULL;
   *ptr = 0xdead;

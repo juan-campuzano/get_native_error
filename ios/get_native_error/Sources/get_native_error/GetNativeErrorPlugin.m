@@ -36,6 +36,10 @@
   } else if ([call.method isEqualToString:@"crashNative"]) {
     [GNECrashCapture crashNative];
     result(nil);
+  } else if ([call.method isEqualToString:@"crashUncaughtException"] ||
+             [call.method isEqualToString:@"throwJavaException"]) {
+    [GNECrashCapture crashUncaughtException];
+    result(nil);
   } else {
     result(FlutterMethodNotImplemented);
   }

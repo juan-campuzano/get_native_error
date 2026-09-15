@@ -48,6 +48,7 @@ class NativeCrashReport {
     this.signalNumber,
     this.code,
     this.faultAddress,
+    this.faultingPc,
     this.pid,
     this.tid,
     this.platform,
@@ -74,6 +75,9 @@ class NativeCrashReport {
   /// Faulting address as a hex string (`si_addr`).
   final String? faultAddress;
 
+  /// Instruction pointer at the crash, from `ucontext`, as a hex string.
+  final String? faultingPc;
+
   /// Process id at crash time.
   final int? pid;
 
@@ -91,12 +95,15 @@ class NativeCrashReport {
 
   /// Best-effort native or JVM / Objective-C stack text.
   ///
-  /// For `signal` crashes each native frame is resolved in-process with
-  /// `dladdr` to `module!symbol + 0xoffset [0xaddress]`. C++ symbols stay
+  /// For `signal` crashes frame 0 is the faulting PC from `ucontext`. Each
+  /// native frame is resolved in-process with `dladdr` to
+  /// `module!symbol + 0xoffset [0xaddress]`, or `module + 0xoffset [0xaddress]`
+  /// when the `.so` / image has no symbol at that address. Module names are
+  /// basenames so Android APK paths do not bury the library. C++ names stay
   /// mangled because demangling is not async-signal-safe; run them through
-  /// `c++filt` / `ndk-stack` (Android) or symbolicate with the matching dSYM
-  /// (iOS) for fully readable names. Frames that cannot be resolved fall back
-  /// to the raw return address.
+  /// `c++filt` / `ndk-stack` (Android) or the matching dSYM (iOS) for fully
+  /// readable names. Frames that cannot be resolved fall back to the raw
+  /// address.
   final String? stackTrace;
 
   /// Java class name or `NSException` name when [kind] is not `signal`.
@@ -165,6 +172,40 @@ class NativeCrashReport {
     }
   }
 
+  /// First non-empty stack frame: the crash site to inspect for a hotfix.
+  String? get crashSite {
+    final String? stack = stackTrace;
+    if (stack == null || stack.isEmpty) {
+      return null;
+    }
+    for (final String line in stack.split('\n')) {
+      final String trimmed = line.trim();
+      if (trimmed.isNotEmpty) {
+        return trimmed;
+      }
+    }
+    return null;
+  }
+
+  /// One-line triage text: what died, and where, so a hotfix can be planned.
+  ///
+  /// Example: `SIGSEGV: invalid memory access at libget_native_error.so!gne_crash_native + 0x8 (fault 0x0)`.
+  String get summary {
+    final StringBuffer text = StringBuffer(diagnosis);
+    final String? site = crashSite;
+    if (site != null) {
+      text.write(' at ');
+      text.write(site);
+    }
+    final String? fault = faultAddress;
+    if (isSignal && fault != null) {
+      text.write(' (fault ');
+      text.write(fault);
+      text.write(')');
+    }
+    return text.toString();
+  }
+
   static String _signalDiagnosis(String? signal) {
     switch (signal) {
       case 'SIGABRT':
@@ -198,6 +239,7 @@ class NativeCrashReport {
       ),
       code: _asInt(_first(map, const ['code'])),
       faultAddress: _str(map, const ['faultAddress', 'fault_address']),
+      faultingPc: _str(map, const ['faultingPc', 'faulting_pc']),
       pid: _asInt(_first(map, const ['pid'])),
       tid: _asInt(_first(map, const ['tid'])),
       platform: _str(map, const ['platform']),

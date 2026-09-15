@@ -57,6 +57,13 @@ class GetNativeErrorPlugin :
                 nativeCrash()
                 result.success(null)
             }
+            "crashUncaughtException", "throwJavaException" -> {
+                Log.w(TAG, "crashUncaughtException requested: test crash will follow")
+                Thread {
+                    throw RuntimeException("Native crash reporter test")
+                }.start()
+                result.success(null)
+            }
             else -> result.notImplemented()
         }
     }
@@ -225,6 +232,7 @@ class GetNativeErrorPlugin :
     private external fun nativeCrash()
 
     companion object {
+        private const val TAG = "GetNativeError"
         private val javaHandlerInstalled = AtomicBoolean(false)
         private val nativeLoaded = AtomicBoolean(false)
         private val abnormalTerminationChecked = AtomicBoolean(false)

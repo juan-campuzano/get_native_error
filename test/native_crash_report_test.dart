@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:get_native_error/native_crash_report.dart';
+import 'package:get_native_error/get_native_error.dart';
 
 void main() {
   group('NativeCrashReport.fromMap', () {
@@ -268,6 +268,45 @@ void main() {
         'exceptionType': 'NSInvalidArgumentException',
       });
       expect(ns.diagnosis, contains('NSInvalidArgumentException'));
+    });
+  });
+
+  group('NativeCrashReport.crashSite and summary', () {
+    test('crashSite is the first stack frame', () {
+      final report = NativeCrashReport.fromMap({
+        'kind': 'signal',
+        'signal': 'SIGSEGV',
+        'stackTrace':
+            'libget_native_error.so!gne_crash_native + 0x8 [0xabc]\n'
+            'libflutter.so + 0x10 [0xdef]',
+      });
+      expect(
+        report.crashSite,
+        'libget_native_error.so!gne_crash_native + 0x8 [0xabc]',
+      );
+    });
+
+    test('summary names the signal, site and fault address', () {
+      final report = NativeCrashReport.fromMap({
+        'kind': 'signal',
+        'signal': 'SIGSEGV',
+        'faultAddress': '0x0',
+        'faultingPc': '0xabc',
+        'stackTrace': 'libget_native_error.so!gne_crash_native + 0x8 [0xabc]',
+      });
+      expect(report.summary, contains('invalid memory access'));
+      expect(report.summary, contains('gne_crash_native'));
+      expect(report.summary, contains('fault 0x0'));
+      expect(report.faultingPc, '0xabc');
+    });
+
+    test('crashSite is null when the stack is missing', () {
+      final report = NativeCrashReport.fromMap({
+        'kind': 'signal',
+        'signal': 'SIGSEGV',
+      });
+      expect(report.crashSite, isNull);
+      expect(report.summary, contains('invalid memory access'));
     });
   });
 }

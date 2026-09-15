@@ -4,7 +4,8 @@ import 'get_native_error_method_channel.dart';
 
 /// The platform interface implemented by Android and iOS.
 ///
-/// App code should use `NativeError` instead of this class.
+/// App code should use `NativeError` instead of this class. Tests and
+/// federated platform implementations may subclass it.
 abstract class GetNativeErrorPlatform extends PlatformInterface {
   /// Constructs a GetNativeErrorPlatform.
   GetNativeErrorPlatform() : super(token: _token);
@@ -67,5 +68,12 @@ abstract class GetNativeErrorPlatform extends PlatformInterface {
   /// Debug-only native crash. See `NativeError.crashNative`.
   Future<void> crashNative() {
     throw UnimplementedError('crashNative() has not been implemented.');
+  }
+
+  /// Debug-only uncaught exception. See `NativeError.crashUncaughtException`.
+  Future<void> crashUncaughtException() {
+    throw UnimplementedError(
+      'crashUncaughtException() has not been implemented.',
+    );
   }
 }

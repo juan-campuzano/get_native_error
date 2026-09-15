@@ -12,6 +12,7 @@ NS_ASSUME_NONNULL_BEGIN
 + (void)deletePendingAtIndex:(NSInteger)index;
 + (void)markHealthyExit;
 + (void)crashNative;
++ (void)crashUncaughtException;
 
 @end
 

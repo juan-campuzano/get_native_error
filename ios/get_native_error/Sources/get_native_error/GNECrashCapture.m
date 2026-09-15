@@ -225,4 +225,11 @@ static void GNEDetectAbnormalTermination(void) {
   gne_crash_native();
 }
 
++ (void)crashUncaughtException {
+  dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+    [NSException raise:NSInternalInconsistencyException
+                format:@"Native crash reporter test"];
+  });
+}
+
 @end

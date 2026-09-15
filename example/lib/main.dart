@@ -141,6 +141,10 @@ class _MyAppState extends State<MyApp> {
                     onPressed: () => _crash(NativeError.crashNative),
                     child: const Text('Crash natively (SIGSEGV)'),
                   ),
+                  OutlinedButton(
+                    onPressed: () => _crash(NativeError.crashUncaughtException),
+                    child: const Text('Throw uncaught exception'),
+                  ),
                 ],
               ),
             ],
@@ -159,25 +163,50 @@ class _CrashTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final subtitleLines = <String>[
-      crash.diagnosis,
-      if (crash.stackTrace != null && crash.stackTrace!.isNotEmpty)
-        crash.stackTrace!,
+    final theme = Theme.of(context);
+    final site = crash.crashSite;
+    final meta = <String>[
+      if (crash.platform != null) crash.platform!,
+      if (crash.arch != null) crash.arch!,
+      if (crash.timestamp != null) crash.timestamp!.toIso8601String(),
+      if (crash.faultAddress != null) 'fault ${crash.faultAddress}',
     ];
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
+    return ExpansionTile(
+      controlAffinity: ListTileControlAffinity.leading,
+      tilePadding: EdgeInsets.zero,
+      childrenPadding: const EdgeInsets.only(bottom: 12),
       title: Text(_titleFor(crash)),
-      subtitle: Text(
-        subtitleLines.join('\n'),
-        maxLines: 8,
-        overflow: TextOverflow.ellipsis,
-      ),
+      subtitle: Text([crash.diagnosis, ?site].join('\n')),
       trailing: IconButton(
         onPressed: onDelete,
         icon: const Icon(Icons.delete_outline),
         tooltip: 'Delete',
       ),
-      isThreeLine: true,
+      children: [
+        if (meta.isNotEmpty)
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Text(meta.join(' · '), style: theme.textTheme.bodySmall),
+          ),
+        if (crash.stackTrace != null && crash.stackTrace!.isNotEmpty) ...[
+          const SizedBox(height: 8),
+          SelectableText(
+            crash.stackTrace!,
+            style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+          ),
+        ],
+        const SizedBox(height: 8),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: crash.summary));
+            },
+            icon: const Icon(Icons.copy, size: 16),
+            label: const Text('Copy summary'),
+          ),
+        ),
+      ],
     );
   }
 

@@ -23,7 +23,7 @@ Future<void> main() async {
 
   final crashes = await NativeError.takePendingCrashes();
   for (final crash in crashes) {
-    // POST crash.toJson() to your API.
+    // POST crash.toJson() to your API, or log crash.summary for triage.
   }
 
   runApp(const MyApp());
@@ -51,7 +51,7 @@ A single session can leave more than one report (for example a native signal fol
 | `abnormalTermination` | Silent death detected on the next launch (kill -9, system OOM) |
 | `unknown` | Missing or unrecognized discriminator (for example a legacy dump) |
 
-Convenience flags `isSignal`, `isException` and `isAbnormalTermination` are available, and `diagnosis` gives a human-readable explanation of the crash. `raw` / `toJson()` keep the original payload for POSTing. `fromMap` is tolerant of older dumps, accepting `snake_case` and a few legacy field names.
+Convenience flags `isSignal`, `isException` and `isAbnormalTermination` are available. `diagnosis` explains the termination mechanism. `crashSite` is the first stack frame (the place to inspect for a hotfix). `summary` is a one-line combination of those plus the fault address, suitable to log or POST. `raw` / `toJson()` keep the original payload. `fromMap` is tolerant of older dumps, accepting `snake_case` and a few legacy field names.
 
 ### Clean exits
 
@@ -65,7 +65,7 @@ final listener = AppLifecycleListener(
 
 Detection is heuristic: mobile systems do not guarantee running code before killing a process.
 
-`NativeError.crashNative()` is **debug only**: it null-dereferences in C and kills the process. Do not call it in production.
+`NativeError.crashNative()` is **debug only**: it null-dereferences in C and kills the process. `NativeError.crashUncaughtException()` throws on a **background** thread so the JVM / `NSException` handler runs (the same throw on the platform thread would be swallowed by Flutter). Do not call either in production.
 
 ## What is captured
 
@@ -82,16 +82,21 @@ Do not install this plugin *instead of* those SDKs; install it so it can chain t
 
 ## Symbolication
 
-Native `signal` frames are resolved in-process with `dladdr` to `module!symbol + 0xoffset [0xaddress]`. C++ symbols stay mangled because demangling is not async-signal-safe; run them through `c++filt` / `ndk-stack` (Android) or symbolicate with the matching dSYM (iOS) for fully readable names. Frames that cannot be resolved fall back to the raw return address. For production analysis, keep the build symbols: unstripped `.so` / NDK symbols on Android, and the dSYM for the same build on iOS.
+Native `signal` frames start at the faulting PC from `ucontext` (not the signal handler). Each address is resolved in-process with `dladdr`:
+
+- `libfoo.so!function + 0x12 [0xaddress]` when a symbol is mapped
+- `libfoo.so + 0x1a4c [0xaddress]` when the library is stripped (`0x1a4c` is the offset from the module base, which `ndk-stack` / a dSYM can still resolve)
+
+Module names are basenames, so Android APK paths do not hide the `.so`. C++ names stay mangled because demangling is not async-signal-safe. For production analysis, keep the build symbols: unstripped `.so` / NDK symbols on Android, and the dSYM for the same build on iOS.
 
 ## Example
 
-The example app lists pending reports after restart (with their `diagnosis`), lets you delete them individually, wires `markHealthyExit()` to the app lifecycle, and has a **Crash natively** button that null-dereferences in C (`SIGSEGV`). Tap it, relaunch, and the reports should appear.
+The example app lists pending reports after restart (title, `diagnosis`, crash site, expandable stack), lets you copy a one-line `summary`, delete reports individually, wires `markHealthyExit()` to the app lifecycle, and has debug buttons for a native `SIGSEGV` and an uncaught JVM / `NSException`. Tap one, relaunch, and the reports should appear.
 
 ## Limits
 
 - Same-session catch or recovery is impossible.
-- Stack traces in the report are a best-effort frame-pointer walk, resolved in-process. Fully readable C++ symbols still need `ndk-stack` / `c++filt` (Android) or dSYMs (iOS).
+- Stack traces in the report are a best-effort unwind from the faulting PC plus a frame-pointer walk, resolved in-process. Fully readable C++ symbols still need `ndk-stack` / `c++filt` (Android) or dSYMs (iOS).
 - Abnormal-termination detection is heuristic and depends on `markHealthyExit()` being called on clean exits.
 - Mach exception ports, MetricKit, minidumps, and breadcrumbs are out of scope for v1.
 - POSIX handlers can miss some iOS crashes that only go through Mach exceptions.

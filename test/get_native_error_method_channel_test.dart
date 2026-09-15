@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:get_native_error/get_native_error_method_channel.dart';
+import 'package:get_native_error/src/get_native_error_method_channel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +20,7 @@ void main() {
           switch (methodCall.method) {
             case 'install':
             case 'crashNative':
+            case 'crashUncaughtException':
               return null;
             case 'peekPendingCrash':
               return pendingJson;
@@ -80,6 +81,11 @@ void main() {
   test('crashNative invokes the method channel', () async {
     await platform.crashNative();
     expect(log.single.method, 'crashNative');
+  });
+
+  test('crashUncaughtException invokes the method channel', () async {
+    await platform.crashUncaughtException();
+    expect(log.single.method, 'crashUncaughtException');
   });
 
   test('peekPendingCrash returns null when native has no file', () async {

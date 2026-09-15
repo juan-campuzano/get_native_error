@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_native_error/get_native_error.dart';
-import 'package:get_native_error/get_native_error_method_channel.dart';
-import 'package:get_native_error/get_native_error_platform_interface.dart';
+import 'package:get_native_error/src/get_native_error_method_channel.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 class MockGetNativeErrorPlatform
@@ -11,6 +10,7 @@ class MockGetNativeErrorPlatform
   List<String> pendingList = <String>[];
   int installCount = 0;
   int crashNativeCount = 0;
+  int crashUncaughtExceptionCount = 0;
   int healthyExitCount = 0;
   final List<int> deletedIndices = <int>[];
 
@@ -57,6 +57,11 @@ class MockGetNativeErrorPlatform
   Future<void> crashNative() async {
     crashNativeCount++;
   }
+
+  @override
+  Future<void> crashUncaughtException() async {
+    crashUncaughtExceptionCount++;
+  }
 }
 
 void main() {
@@ -80,9 +85,11 @@ void main() {
 
     await NativeError.install();
     await NativeError.crashNative();
+    await NativeError.crashUncaughtException();
 
     expect(fakePlatform.installCount, 1);
     expect(fakePlatform.crashNativeCount, 1);
+    expect(fakePlatform.crashUncaughtExceptionCount, 1);
   });
 
   test('peekPendingCrash does not consume the pending report', () async {
