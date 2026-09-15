@@ -15,6 +15,18 @@ class InvalidTokenPlatform implements GetNativeErrorPlatform {
 
   @override
   Future<String?> takePendingCrash() async => null;
+
+  @override
+  Future<List<String>> peekPendingCrashes() async => const <String>[];
+
+  @override
+  Future<List<String>> takePendingCrashes() async => const <String>[];
+
+  @override
+  Future<void> deletePendingCrash(int index) async {}
+
+  @override
+  Future<void> markHealthyExit() async {}
 }
 
 void main() {
@@ -24,6 +36,10 @@ void main() {
     expect(platform.install, throwsUnimplementedError);
     expect(platform.peekPendingCrash, throwsUnimplementedError);
     expect(platform.takePendingCrash, throwsUnimplementedError);
+    expect(platform.peekPendingCrashes, throwsUnimplementedError);
+    expect(platform.takePendingCrashes, throwsUnimplementedError);
+    expect(() => platform.deletePendingCrash(0), throwsUnimplementedError);
+    expect(platform.markHealthyExit, throwsUnimplementedError);
     expect(platform.crashNative, throwsUnimplementedError);
   });
 

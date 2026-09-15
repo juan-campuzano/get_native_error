@@ -28,16 +28,67 @@ class NativeError {
     return _parse(await GetNativeErrorPlatform.instance.peekPendingCrash());
   }
 
-  /// Returns a pending crash from a previous run and deletes the file so it
-  /// is only reported once.
+  /// Returns the oldest pending crash from a previous run and removes that
+  /// single record so it is only reported once. Other stored crashes remain.
   static Future<NativeCrashReport?> takePendingCrash() async {
     return _parse(await GetNativeErrorPlatform.instance.takePendingCrash());
+  }
+
+  /// Returns every pending crash from previous runs, oldest first, without
+  /// deleting them.
+  ///
+  /// A single session can produce more than one report (for example a native
+  /// signal followed by a JVM exception), so prefer this over
+  /// [peekPendingCrash] when you want to report all of them.
+  static Future<List<NativeCrashReport>> peekPendingCrashes() async {
+    return _parseAll(
+      await GetNativeErrorPlatform.instance.peekPendingCrashes(),
+    );
+  }
+
+  /// Returns every pending crash from previous runs, oldest first, then clears
+  /// them all so they are reported once.
+  static Future<List<NativeCrashReport>> takePendingCrashes() async {
+    return _parseAll(
+      await GetNativeErrorPlatform.instance.takePendingCrashes(),
+    );
+  }
+
+  /// Removes a single stored crash by [index] (0 = oldest), keeping the rest.
+  ///
+  /// When processing a full list, delete from the last index down to the first
+  /// so earlier indices stay valid.
+  static Future<void> deletePendingCrash(int index) {
+    return GetNativeErrorPlatform.instance.deletePendingCrash(index);
+  }
+
+  /// Marks the current session as a clean exit.
+  ///
+  /// The plugin drops a session marker on [install]. If the next launch finds
+  /// that marker with no crash on disk, it reports an `abnormalTermination`
+  /// (for example `kill -9` or a system OOM, which run no handler). Call this
+  /// on a clean shutdown, for example from an [AppLifecycleListener], so those
+  /// exits are not misreported. Detection is heuristic: mobile systems do not
+  /// guarantee running code before killing a process.
+  static Future<void> markHealthyExit() {
+    return GetNativeErrorPlatform.instance.markHealthyExit();
   }
 
   /// **Debug only.** Null-dereferences in native code to raise `SIGSEGV`
   /// and kill the process. Do not call this in production.
   static Future<void> crashNative() {
     return GetNativeErrorPlatform.instance.crashNative();
+  }
+
+  static List<NativeCrashReport> _parseAll(List<String> lines) {
+    final List<NativeCrashReport> reports = <NativeCrashReport>[];
+    for (final String line in lines) {
+      final NativeCrashReport? report = _parse(line);
+      if (report != null) {
+        reports.add(report);
+      }
+    }
+    return reports;
   }
 
   static NativeCrashReport? _parse(String? json) {

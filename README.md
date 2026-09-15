@@ -11,7 +11,7 @@ dependencies:
   get_native_error: ^0.0.1
 ```
 
-Call `install()` as early as `main()` allows, then consume a pending report before `runApp`:
+Call `install()` as early as `main()` allows, then consume pending reports before `runApp`:
 
 ```dart
 import 'package:flutter/widgets.dart';
@@ -21,8 +21,8 @@ Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await NativeError.install();
 
-  final crash = await NativeError.takePendingCrash();
-  if (crash != null) {
+  final crashes = await NativeError.takePendingCrashes();
+  for (final crash in crashes) {
     // POST crash.toJson() to your API.
   }
 
@@ -30,9 +30,40 @@ Future<void> main() async {
 }
 ```
 
-`takePendingCrash()` deletes the file so a report is sent once. Use `peekPendingCrash()` to inspect without deleting.
+A single session can leave more than one report (for example a native signal followed by a JVM exception), so reports are stored as JSON Lines and read as a list.
 
-`NativeCrashReport.kind` is `signal`, `java` (Android uncaught JVM exceptions), or `nsException` (iOS uncaught `NSException`).
+### Reading reports
+
+- `takePendingCrashes()` returns every report, oldest first, then clears them all.
+- `peekPendingCrashes()` returns every report without deleting them.
+- `takePendingCrash()` / `peekPendingCrash()` operate on the oldest single report. `takePendingCrash()` removes only that one and keeps the rest.
+- `deletePendingCrash(index)` removes one stored report by index (0 = oldest). When processing a full list, delete from the last index down to the first so earlier indices stay valid.
+
+### The report
+
+`NativeCrashReport.kindType` is a typed `NativeCrashKind`:
+
+| Kind | Meaning |
+| --- | --- |
+| `signal` | Fatal POSIX signal |
+| `java` | Android uncaught JVM exception |
+| `nsException` | iOS uncaught `NSException` |
+| `abnormalTermination` | Silent death detected on the next launch (kill -9, system OOM) |
+| `unknown` | Missing or unrecognized discriminator (for example a legacy dump) |
+
+Convenience flags `isSignal`, `isException` and `isAbnormalTermination` are available, and `diagnosis` gives a human-readable explanation of the crash. `raw` / `toJson()` keep the original payload for POSTing. `fromMap` is tolerant of older dumps, accepting `snake_case` and a few legacy field names.
+
+### Clean exits
+
+The plugin drops a session marker on `install()`. If the next launch finds that marker with no crash on disk, it reports an `abnormalTermination`. Call `markHealthyExit()` on a clean shutdown so those exits are not misreported:
+
+```dart
+final listener = AppLifecycleListener(
+  onDetach: () => NativeError.markHealthyExit(),
+);
+```
+
+Detection is heuristic: mobile systems do not guarantee running code before killing a process.
 
 `NativeError.crashNative()` is **debug only**: it null-dereferences in C and kills the process. Do not call it in production.
 
@@ -43,19 +74,25 @@ Future<void> main() async {
 | `SIGSEGV`, `SIGABRT`, `SIGBUS`, `SIGFPE`, `SIGILL`, `SIGTRAP` | Android, iOS |
 | Uncaught Java/Kotlin exceptions | Android |
 | Uncaught `NSException` | iOS |
+| Abnormal termination (kill -9, system OOM), heuristically | Android, iOS |
 
 Handlers use `SA_SIGINFO | SA_ONSTACK` and an alternate signal stack. Previous handlers (Flutter engine, Firebase Crashlytics, Sentry, and similar) are chained, then the default action is restored and the signal is re-raised so the OS still records a tombstone / crash report.
 
 Do not install this plugin *instead of* those SDKs; install it so it can chain them. Call `NativeError.install()` after other crash reporters if you need this plugin to run first.
 
+## Symbolication
+
+Native `signal` frames are resolved in-process with `dladdr` to `module!symbol + 0xoffset [0xaddress]`. C++ symbols stay mangled because demangling is not async-signal-safe; run them through `c++filt` / `ndk-stack` (Android) or symbolicate with the matching dSYM (iOS) for fully readable names. Frames that cannot be resolved fall back to the raw return address. For production analysis, keep the build symbols: unstripped `.so` / NDK symbols on Android, and the dSYM for the same build on iOS.
+
 ## Example
 
-The example app shows a pending report after restart and a **Crash natively** button that null-dereferences in C (`SIGSEGV`). Tap it, relaunch, and the JSON payload should appear.
+The example app lists pending reports after restart (with their `diagnosis`), lets you delete them individually, wires `markHealthyExit()` to the app lifecycle, and has a **Crash natively** button that null-dereferences in C (`SIGSEGV`). Tap it, relaunch, and the reports should appear.
 
 ## Limits
 
 - Same-session catch or recovery is impossible.
-- Stack traces in the report are a best-effort frame-pointer walk. Readable symbols need `ndk-stack` (Android) or dSYMs (iOS).
+- Stack traces in the report are a best-effort frame-pointer walk, resolved in-process. Fully readable C++ symbols still need `ndk-stack` / `c++filt` (Android) or dSYMs (iOS).
+- Abnormal-termination detection is heuristic and depends on `markHealthyExit()` being called on clean exits.
 - Mach exception ports, MetricKit, minidumps, and breadcrumbs are out of scope for v1.
 - POSIX handlers can miss some iOS crashes that only go through Mach exceptions.
 

@@ -31,14 +31,37 @@ abstract class GetNativeErrorPlatform extends PlatformInterface {
     throw UnimplementedError('install() has not been implemented.');
   }
 
-  /// JSON for a pending crash, or `null` if none. Does not delete the file.
+  /// JSON for the oldest pending crash, or `null` if none. Does not delete
+  /// anything.
   Future<String?> peekPendingCrash() {
     throw UnimplementedError('peekPendingCrash() has not been implemented.');
   }
 
-  /// JSON for a pending crash, or `null` if none. Deletes the file.
+  /// JSON for the oldest pending crash, or `null` if none. Removes that one
+  /// record and keeps the rest.
   Future<String?> takePendingCrash() {
     throw UnimplementedError('takePendingCrash() has not been implemented.');
+  }
+
+  /// JSON for every pending crash, oldest first. Does not delete anything.
+  Future<List<String>> peekPendingCrashes() {
+    throw UnimplementedError('peekPendingCrashes() has not been implemented.');
+  }
+
+  /// JSON for every pending crash, oldest first, then clears them all.
+  Future<List<String>> takePendingCrashes() {
+    throw UnimplementedError('takePendingCrashes() has not been implemented.');
+  }
+
+  /// Removes a single stored crash by [index] (0 = oldest), keeping the rest.
+  Future<void> deletePendingCrash(int index) {
+    throw UnimplementedError('deletePendingCrash() has not been implemented.');
+  }
+
+  /// Marks the current session as a clean exit so the next launch does not
+  /// report an abnormal termination.
+  Future<void> markHealthyExit() {
+    throw UnimplementedError('markHealthyExit() has not been implemented.');
   }
 
   /// Debug-only native crash. See `NativeError.crashNative`.

@@ -36,8 +36,22 @@ class GetNativeErrorPlugin :
                 installInternal()
                 result.success(null)
             }
-            "peekPendingCrash" -> result.success(readPending(delete = false))
-            "takePendingCrash" -> result.success(readPending(delete = true))
+            "peekPendingCrash" -> result.success(readOldest(delete = false))
+            "takePendingCrash" -> result.success(readOldest(delete = true))
+            "peekPendingCrashes" -> result.success(readAll())
+            "takePendingCrashes" -> {
+                val crashes = readAll()
+                clearAll()
+                result.success(crashes)
+            }
+            "deletePendingCrash" -> {
+                deleteAt(call.arguments as? Int ?: -1)
+                result.success(null)
+            }
+            "markHealthyExit" -> {
+                sessionFile()?.delete()
+                result.success(null)
+            }
             "crashNative" -> {
                 ensureNativeLoaded()
                 nativeCrash()
@@ -59,6 +73,13 @@ class GetNativeErrorPlugin :
         return File(dir, "pending.json")
     }
 
+    private fun sessionFile(): File? {
+        val context = appContext ?: return null
+        val dir = File(context.filesDir, "native_crashes")
+        dir.mkdirs()
+        return File(dir, "session.marker")
+    }
+
     private fun ensureNativeLoaded() {
         if (nativeLoaded.compareAndSet(false, true)) {
             System.loadLibrary("get_native_error")
@@ -70,6 +91,48 @@ class GetNativeErrorPlugin :
         ensureNativeLoaded()
         nativeInstall(file.absolutePath)
         installJavaHandler(file)
+        detectAbnormalTermination(file)
+    }
+
+    // Heuristic for deaths that run no handler (kill -9, system OOM, device
+    // shutdown). A leftover session marker with no crash on disk means the
+    // previous session died silently, so a synthetic record is written. When a
+    // crash is present, that death is already explained and no record is added.
+    private fun detectAbnormalTermination(file: File) {
+        if (abnormalTerminationChecked.compareAndSet(false, true).not()) {
+            return
+        }
+        val marker = sessionFile() ?: return
+        val hadCrash = file.exists() && file.length() > 0
+        if (marker.exists() && !hadCrash) {
+            writeAbnormalTermination(file)
+        }
+        try {
+            marker.parentFile?.mkdirs()
+            marker.writeText(System.currentTimeMillis().toString())
+        } catch (_: Throwable) {
+            // Best-effort: without the marker we simply skip the next check.
+        }
+    }
+
+    private fun writeAbnormalTermination(file: File) {
+        try {
+            val payload =
+                JSONObject()
+                    .put("kind", "abnormalTermination")
+                    .put(
+                        "diagnosis",
+                        "The previous session ended without running any handler, " +
+                            "for example kill -9 or a system OOM.",
+                    )
+                    .put("platform", "android")
+                    .put("arch", Build.SUPPORTED_ABIS.firstOrNull() ?: "")
+                    .put("timestampMs", System.currentTimeMillis())
+            file.parentFile?.mkdirs()
+            file.appendText(payload.toString() + "\n")
+        } catch (_: Throwable) {
+            // Best-effort only.
+        }
     }
 
     private fun installJavaHandler(file: File) {
@@ -103,26 +166,58 @@ class GetNativeErrorPlugin :
                     .put("arch", Build.SUPPORTED_ABIS.firstOrNull() ?: "")
                     .put("timestampMs", System.currentTimeMillis())
             file.parentFile?.mkdirs()
-            file.writeText(payload.toString())
+            // JSON Lines: append one line per record so several crashes from
+            // the same session are all preserved. toString() has no real line
+            // breaks because the stack trace is JSON-escaped.
+            file.appendText(payload.toString() + "\n")
         } catch (_: Throwable) {
             // Best-effort: the process is already dying.
         }
     }
 
-    private fun readPending(delete: Boolean): String? {
-        val file = crashFile() ?: return null
+    private fun readAll(): List<String> {
+        val file = crashFile() ?: return emptyList()
         if (!file.exists()) {
-            return null
+            return emptyList()
         }
         return try {
-            val text = file.readText()
-            if (delete) {
-                file.delete()
-            }
-            text.ifEmpty { null }
+            file.readLines().map { it.trim() }.filter { it.isNotEmpty() }
         } catch (_: Throwable) {
-            null
+            emptyList()
         }
+    }
+
+    private fun readOldest(delete: Boolean): String? {
+        val crashes = readAll()
+        if (crashes.isEmpty()) {
+            return null
+        }
+        if (delete) {
+            deleteAt(0)
+        }
+        return crashes.first()
+    }
+
+    private fun deleteAt(index: Int) {
+        val crashes = readAll().toMutableList()
+        if (index !in crashes.indices) {
+            return
+        }
+        crashes.removeAt(index)
+        writeAll(crashes)
+    }
+
+    private fun clearAll() {
+        crashFile()?.delete()
+    }
+
+    private fun writeAll(crashes: List<String>) {
+        val file = crashFile() ?: return
+        if (crashes.isEmpty()) {
+            file.delete()
+            return
+        }
+        file.writeText(crashes.joinToString("\n") + "\n")
     }
 
     private external fun nativeInstall(path: String)
@@ -132,5 +227,6 @@ class GetNativeErrorPlugin :
     companion object {
         private val javaHandlerInstalled = AtomicBoolean(false)
         private val nativeLoaded = AtomicBoolean(false)
+        private val abnormalTerminationChecked = AtomicBoolean(false)
     }
 }

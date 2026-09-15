@@ -27,6 +27,15 @@ void main() {
               final value = pendingJson;
               pendingJson = null;
               return value;
+            case 'peekPendingCrashes':
+              return pendingJson == null ? <Object?>[] : <Object?>[pendingJson];
+            case 'takePendingCrashes':
+              final value = pendingJson;
+              pendingJson = null;
+              return value == null ? <Object?>[] : <Object?>[value];
+            case 'deletePendingCrash':
+            case 'markHealthyExit':
+              return null;
             default:
               return null;
           }
@@ -48,6 +57,23 @@ void main() {
       'peekPendingCrash',
       'takePendingCrash',
       'takePendingCrash',
+    ]);
+  });
+
+  test('pending crashes list round-trip', () async {
+    expect(await platform.peekPendingCrashes(), <String>[
+      '{"kind":"signal","signal":"SIGABRT"}',
+    ]);
+    expect(await platform.takePendingCrashes(), <String>[
+      '{"kind":"signal","signal":"SIGABRT"}',
+    ]);
+    expect(await platform.takePendingCrashes(), isEmpty);
+    await platform.deletePendingCrash(0);
+    expect(log.map((call) => call.method), [
+      'peekPendingCrashes',
+      'takePendingCrashes',
+      'takePendingCrashes',
+      'deletePendingCrash',
     ]);
   });
 

@@ -10,6 +10,10 @@
 #include <time.h>
 #include <unistd.h>
 
+#if defined(__ANDROID__) || defined(__APPLE__)
+#include <dlfcn.h>
+#endif
+
 #ifdef __ANDROID__
 #include <sys/syscall.h>
 #endif
@@ -150,6 +154,38 @@ static int gne_fp_sane(uintptr_t fp, uintptr_t prev) {
   return 1;
 }
 
+// Resuelve una direccion de retorno a "modulo!simbolo + 0xoffset [0xraw]"
+// usando dladdr, que consulta tablas ya mapeadas sin reservar memoria y es
+// seguro dentro del handler. El nombre C++ queda mangled a proposito: el
+// demangle usa malloc/free y no es async-signal-safe, por lo que se difiere a
+// la capa Dart tras reiniciar. Cuando dladdr no resuelve, se emite la
+// direccion cruda para poder correlacionar con simbolos externos.
+static size_t gne_append_frame(char *buf, size_t off, size_t cap, uintptr_t addr) {
+#if defined(__ANDROID__) || defined(__APPLE__)
+  Dl_info info;
+  memset(&info, 0, sizeof(info));
+  if (dladdr((const void *)addr, &info) != 0) {
+    const char *module = info.dli_fname != NULL ? info.dli_fname : "unknown-module";
+    const char *symbol = info.dli_sname != NULL ? info.dli_sname : "unknown-symbol";
+    unsigned long offset = 0;
+    if (info.dli_saddr != NULL) {
+      offset = (unsigned long)(addr - (uintptr_t)info.dli_saddr);
+    }
+    off = gne_append_str(buf, off, cap, module);
+    off = gne_append_str(buf, off, cap, "!");
+    off = gne_append_str(buf, off, cap, symbol);
+    off = gne_append_str(buf, off, cap, " + ");
+    off = gne_append_hex(buf, off, cap, offset);
+    off = gne_append_str(buf, off, cap, " [");
+    off = gne_append_hex(buf, off, cap, (unsigned long)addr);
+    off = gne_append_str(buf, off, cap, "]");
+    return off;
+  }
+#endif
+  off = gne_append_hex(buf, off, cap, (unsigned long)addr);
+  return off;
+}
+
 static size_t gne_append_stack(char *buf, size_t off, size_t cap) {
   uintptr_t fp = (uintptr_t)__builtin_frame_address(0);
   uintptr_t prev = 0;
@@ -160,7 +196,7 @@ static size_t gne_append_stack(char *buf, size_t off, size_t cap) {
     if (frames > 0) {
       off = gne_append_str(buf, off, cap, "\\n");
     }
-    off = gne_append_hex(buf, off, cap, (unsigned long)lr);
+    off = gne_append_frame(buf, off, cap, lr);
     prev = fp;
     fp = frame[0];
     frames++;
@@ -204,9 +240,12 @@ static void gne_write_report(int signo, siginfo_t *info) {
   off = gne_append_uint(json, off, cap, (unsigned long)timestamp_ms);
   off = gne_append_str(json, off, cap, ",\"stackTrace\":\"");
   off = gne_append_stack(json, off, cap);
-  off = gne_append_str(json, off, cap, "\"}");
+  off = gne_append_str(json, off, cap, "\"}\n");
 
-  int fd = open(g_crash_path, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  // JSON Lines en modo append: una sesion puede dejar varios reportes y cada
+  // uno es una sola linea, porque el stack trace usa "\\n" escapado y no
+  // saltos reales. O_APPEND mantiene la escritura segura dentro del handler.
+  int fd = open(g_crash_path, O_WRONLY | O_CREAT | O_APPEND, 0600);
   if (fd < 0) {
     return;
   }
