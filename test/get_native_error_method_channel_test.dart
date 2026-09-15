@@ -1,6 +1,6 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:get_native_error/get_native_error_method_channel.dart';
+import 'package:get_native_error/src/get_native_error_method_channel.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -20,6 +20,7 @@ void main() {
           switch (methodCall.method) {
             case 'install':
             case 'crashNative':
+            case 'crashUncaughtException':
               return null;
             case 'peekPendingCrash':
               return pendingJson;
@@ -27,6 +28,15 @@ void main() {
               final value = pendingJson;
               pendingJson = null;
               return value;
+            case 'peekPendingCrashes':
+              return pendingJson == null ? <Object?>[] : <Object?>[pendingJson];
+            case 'takePendingCrashes':
+              final value = pendingJson;
+              pendingJson = null;
+              return value == null ? <Object?>[] : <Object?>[value];
+            case 'deletePendingCrash':
+            case 'markHealthyExit':
+              return null;
             default:
               return null;
           }
@@ -51,9 +61,31 @@ void main() {
     ]);
   });
 
+  test('pending crashes list round-trip', () async {
+    expect(await platform.peekPendingCrashes(), <String>[
+      '{"kind":"signal","signal":"SIGABRT"}',
+    ]);
+    expect(await platform.takePendingCrashes(), <String>[
+      '{"kind":"signal","signal":"SIGABRT"}',
+    ]);
+    expect(await platform.takePendingCrashes(), isEmpty);
+    await platform.deletePendingCrash(0);
+    expect(log.map((call) => call.method), [
+      'peekPendingCrashes',
+      'takePendingCrashes',
+      'takePendingCrashes',
+      'deletePendingCrash',
+    ]);
+  });
+
   test('crashNative invokes the method channel', () async {
     await platform.crashNative();
     expect(log.single.method, 'crashNative');
+  });
+
+  test('crashUncaughtException invokes the method channel', () async {
+    await platform.crashUncaughtException();
+    expect(log.single.method, 'crashUncaughtException');
   });
 
   test('peekPendingCrash returns null when native has no file', () async {

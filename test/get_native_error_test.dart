@@ -1,15 +1,18 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:get_native_error/get_native_error.dart';
-import 'package:get_native_error/get_native_error_method_channel.dart';
-import 'package:get_native_error/get_native_error_platform_interface.dart';
+import 'package:get_native_error/src/get_native_error_method_channel.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 class MockGetNativeErrorPlatform
     with MockPlatformInterfaceMixin
     implements GetNativeErrorPlatform {
   String? pending;
+  List<String> pendingList = <String>[];
   int installCount = 0;
   int crashNativeCount = 0;
+  int crashUncaughtExceptionCount = 0;
+  int healthyExitCount = 0;
+  final List<int> deletedIndices = <int>[];
 
   @override
   Future<void> install() async {
@@ -27,8 +30,37 @@ class MockGetNativeErrorPlatform
   }
 
   @override
+  Future<List<String>> peekPendingCrashes() async =>
+      List<String>.from(pendingList);
+
+  @override
+  Future<List<String>> takePendingCrashes() async {
+    final value = List<String>.from(pendingList);
+    pendingList = <String>[];
+    return value;
+  }
+
+  @override
+  Future<void> deletePendingCrash(int index) async {
+    deletedIndices.add(index);
+    if (index >= 0 && index < pendingList.length) {
+      pendingList.removeAt(index);
+    }
+  }
+
+  @override
+  Future<void> markHealthyExit() async {
+    healthyExitCount++;
+  }
+
+  @override
   Future<void> crashNative() async {
     crashNativeCount++;
+  }
+
+  @override
+  Future<void> crashUncaughtException() async {
+    crashUncaughtExceptionCount++;
   }
 }
 
@@ -53,9 +85,11 @@ void main() {
 
     await NativeError.install();
     await NativeError.crashNative();
+    await NativeError.crashUncaughtException();
 
     expect(fakePlatform.installCount, 1);
     expect(fakePlatform.crashNativeCount, 1);
+    expect(fakePlatform.crashUncaughtExceptionCount, 1);
   });
 
   test('peekPendingCrash does not consume the pending report', () async {
@@ -85,6 +119,62 @@ void main() {
     expect(taken?.kind, 'signal');
     expect(taken?.signalNumber, 11);
     expect(await NativeError.takePendingCrash(), isNull);
+  });
+
+  test('peekPendingCrashes parses every record without consuming', () async {
+    final fakePlatform = MockGetNativeErrorPlatform()
+      ..pendingList = <String>[
+        '{"kind":"signal","signal":"SIGSEGV"}',
+        '{"kind":"java","exceptionType":"java.lang.RuntimeException"}',
+      ];
+    GetNativeErrorPlatform.instance = fakePlatform;
+
+    final reports = await NativeError.peekPendingCrashes();
+    expect(reports, hasLength(2));
+    expect(reports.first.signal, 'SIGSEGV');
+    expect(reports.last.exceptionType, 'java.lang.RuntimeException');
+    expect(await NativeError.peekPendingCrashes(), hasLength(2));
+  });
+
+  test('takePendingCrashes parses and clears all records', () async {
+    final fakePlatform = MockGetNativeErrorPlatform()
+      ..pendingList = <String>['{"kind":"signal","signal":"SIGABRT"}'];
+    GetNativeErrorPlatform.instance = fakePlatform;
+
+    final reports = await NativeError.takePendingCrashes();
+    expect(reports, hasLength(1));
+    expect(reports.single.signal, 'SIGABRT');
+    expect(await NativeError.takePendingCrashes(), isEmpty);
+  });
+
+  test('deletePendingCrash delegates the index to the platform', () async {
+    final fakePlatform = MockGetNativeErrorPlatform()
+      ..pendingList = <String>['{"kind":"signal"}', '{"kind":"java"}'];
+    GetNativeErrorPlatform.instance = fakePlatform;
+
+    await NativeError.deletePendingCrash(1);
+    expect(fakePlatform.deletedIndices, <int>[1]);
+    expect(fakePlatform.pendingList, hasLength(1));
+  });
+
+  test('markHealthyExit delegates to the platform', () async {
+    final fakePlatform = MockGetNativeErrorPlatform();
+    GetNativeErrorPlatform.instance = fakePlatform;
+
+    await NativeError.markHealthyExit();
+    expect(fakePlatform.healthyExitCount, 1);
+  });
+
+  test('parses an abnormalTermination record from a previous run', () async {
+    final fakePlatform = MockGetNativeErrorPlatform()
+      ..pending =
+          '{"kind":"abnormalTermination","diagnosis":"system OOM","platform":"android"}';
+    GetNativeErrorPlatform.instance = fakePlatform;
+
+    final report = await NativeError.takePendingCrash();
+    expect(report?.kind, 'abnormalTermination');
+    expect(report?.platform, 'android');
+    expect(report?.raw['diagnosis'], 'system OOM');
   });
 
   test('parses java JSON from a previous run', () async {

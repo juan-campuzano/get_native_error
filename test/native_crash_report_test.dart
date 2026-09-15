@@ -1,5 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:get_native_error/native_crash_report.dart';
+import 'package:get_native_error/get_native_error.dart';
 
 void main() {
   group('NativeCrashReport.fromMap', () {
@@ -127,5 +127,186 @@ void main() {
     });
     expect(report.toString(), contains('SIGTRAP'));
     expect(report.toString(), startsWith('NativeCrashReport('));
+  });
+
+  group('NativeCrashReport.kindType', () {
+    test('maps known kinds', () {
+      expect(
+        NativeCrashReport.fromMap({'kind': 'signal'}).kindType,
+        NativeCrashKind.signal,
+      );
+      expect(
+        NativeCrashReport.fromMap({'kind': 'java'}).kindType,
+        NativeCrashKind.java,
+      );
+      expect(
+        NativeCrashReport.fromMap({'kind': 'nsException'}).kindType,
+        NativeCrashKind.nsException,
+      );
+      expect(
+        NativeCrashReport.fromMap({'kind': 'abnormalTermination'}).kindType,
+        NativeCrashKind.abnormalTermination,
+      );
+    });
+
+    test('accepts the legacy abnormal-termination spelling', () {
+      expect(
+        NativeCrashReport.fromMap({
+          'kind': 'UNKNOWN_ABNORMAL_TERMINATION',
+        }).kindType,
+        NativeCrashKind.abnormalTermination,
+      );
+    });
+
+    test('falls back to unknown for missing or unrecognized kinds', () {
+      expect(NativeCrashReport.fromMap({}).kindType, NativeCrashKind.unknown);
+      expect(
+        NativeCrashReport.fromMap({'kind': 'weird'}).kindType,
+        NativeCrashKind.unknown,
+      );
+    });
+
+    test('convenience flags reflect the kind', () {
+      final signal = NativeCrashReport.fromMap({'kind': 'signal'});
+      expect(signal.isSignal, isTrue);
+      expect(signal.isException, isFalse);
+      expect(signal.isAbnormalTermination, isFalse);
+
+      final java = NativeCrashReport.fromMap({'kind': 'java'});
+      expect(java.isException, isTrue);
+
+      final abnormal = NativeCrashReport.fromMap({
+        'kind': 'abnormalTermination',
+      });
+      expect(abnormal.isAbnormalTermination, isTrue);
+    });
+  });
+
+  group('NativeCrashReport legacy fields', () {
+    test('parses snake_case and legacy field names', () {
+      final report = NativeCrashReport.fromMap({
+        'signal_name': 'SIGSEGV',
+        'signal_number': 11,
+        'stack_trace': '#0 legacy',
+        'exception_type': 'java.lang.RuntimeException',
+        'message': 'legacy message',
+        'thread': 'main',
+        'device_info': {'model': 'Pixel'},
+      });
+
+      // No 'kind' present in the legacy dump.
+      expect(report.kindType, NativeCrashKind.unknown);
+      expect(report.signal, 'SIGSEGV');
+      expect(report.signalNumber, 11);
+      expect(report.stackTrace, '#0 legacy');
+      expect(report.exceptionType, 'java.lang.RuntimeException');
+      expect(report.exceptionMessage, 'legacy message');
+      expect(report.threadName, 'main');
+      // Unknown fields survive in raw for POSTing.
+      expect(report.raw['device_info'], isA<Map>());
+    });
+
+    test('prefers current field names over legacy ones', () {
+      final report = NativeCrashReport.fromMap({
+        'signal': 'SIGABRT',
+        'signal_name': 'SIGSEGV',
+        'stackTrace': '#0 current',
+        'stack_trace': '#0 legacy',
+      });
+      expect(report.signal, 'SIGABRT');
+      expect(report.stackTrace, '#0 current');
+    });
+  });
+
+  group('NativeCrashReport.diagnosis', () {
+    test('derives text from the signal name', () {
+      expect(
+        NativeCrashReport.fromMap({
+          'kind': 'signal',
+          'signal': 'SIGSEGV',
+        }).diagnosis,
+        contains('invalid memory access'),
+      );
+      expect(
+        NativeCrashReport.fromMap({
+          'kind': 'signal',
+          'signal': 'SIGABRT',
+        }).diagnosis,
+        startsWith('SIGABRT'),
+      );
+    });
+
+    test('falls back for an unknown signal', () {
+      expect(
+        NativeCrashReport.fromMap({
+          'kind': 'signal',
+          'signal': 'SIGWAT',
+        }).diagnosis,
+        'Unidentified native signal.',
+      );
+    });
+
+    test('prefers an explicit diagnosis from the payload', () {
+      final report = NativeCrashReport.fromMap({
+        'kind': 'abnormalTermination',
+        'diagnosis': 'system OOM',
+      });
+      expect(report.diagnosis, 'system OOM');
+    });
+
+    test('summarizes java and nsException crashes', () {
+      final java = NativeCrashReport.fromMap({
+        'kind': 'java',
+        'exceptionType': 'java.lang.IllegalStateException',
+        'exceptionMessage': 'boom',
+      });
+      expect(java.diagnosis, contains('IllegalStateException'));
+      expect(java.diagnosis, contains('boom'));
+
+      final ns = NativeCrashReport.fromMap({
+        'kind': 'nsException',
+        'exceptionType': 'NSInvalidArgumentException',
+      });
+      expect(ns.diagnosis, contains('NSInvalidArgumentException'));
+    });
+  });
+
+  group('NativeCrashReport.crashSite and summary', () {
+    test('crashSite is the first stack frame', () {
+      final report = NativeCrashReport.fromMap({
+        'kind': 'signal',
+        'signal': 'SIGSEGV',
+        'stackTrace':
+            'libget_native_error.so!gne_crash_native + 0x8 [0xabc]\n'
+            'libflutter.so + 0x10 [0xdef]',
+      });
+      expect(
+        report.crashSite,
+        'libget_native_error.so!gne_crash_native + 0x8 [0xabc]',
+      );
+    });
+
+    test('summary names the signal, site and fault address', () {
+      final report = NativeCrashReport.fromMap({
+        'kind': 'signal',
+        'signal': 'SIGSEGV',
+        'faultAddress': '0x0',
+        'faultingPc': '0xabc',
+        'stackTrace': 'libget_native_error.so!gne_crash_native + 0x8 [0xabc]',
+      });
+      expect(report.summary, contains('invalid memory access'));
+      expect(report.summary, contains('gne_crash_native'));
+      expect(report.summary, contains('fault 0x0'));
+      expect(report.faultingPc, '0xabc');
+    });
+
+    test('crashSite is null when the stack is missing', () {
+      final report = NativeCrashReport.fromMap({
+        'kind': 'signal',
+        'signal': 'SIGSEGV',
+      });
+      expect(report.crashSite, isNull);
+      expect(report.summary, contains('invalid memory access'));
+    });
   });
 }
