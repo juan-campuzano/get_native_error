@@ -1,4 +1,4 @@
-## Unreleased
+## 0.0.2-rc.1
 
 * Persist multiple reports per session as JSON Lines. Added `takePendingCrashes()` / `peekPendingCrashes()` (list) and `deletePendingCrash(index)`; `takePendingCrash()` now removes only the oldest record and keeps the rest.
 * Resolve native `signal` frames in-process with `dladdr` (`module!symbol + 0xoffset [0xaddress]`); C++ demangling is left to `c++filt` / `ndk-stack` / dSYM so the signal handler stays async-signal-safe.

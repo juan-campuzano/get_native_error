@@ -2,7 +2,7 @@ name: get_native_error
 description: >-
   Capture fatal native signals on Android and iOS and read them from Dart
   on the next launch.
-version: 0.0.1
+version: 0.0.2-rc.1
 homepage: https://github.com/juan-campuzano/get_native_error
 repository: https://github.com/juan-campuzano/get_native_error
 issue_tracker: https://github.com/juan-campuzano/get_native_error/issues
