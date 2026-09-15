@@ -116,7 +116,7 @@ class _MyAppState extends State<MyApp> {
                     ? const SizedBox.shrink()
                     : ListView.separated(
                         itemCount: _crashes.length,
-                        separatorBuilder: (_, __) => const Divider(),
+                        separatorBuilder: (_, _) => const Divider(),
                         itemBuilder: (context, index) {
                           final crash = _crashes[index];
                           return _CrashTile(
